@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+# throwaway chipnet keys created by "npm run hui -- keygen"
+.hui/
+*.log

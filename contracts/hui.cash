@@ -1,0 +1,200 @@
+pragma cashscript ^0.14.0;
+
+/*
+ * Hui: a 4-member rotating savings circle (hui / paluwagan / tontine / susu)
+ * whose pot is held by this covenant instead of a trusted organiser.
+ *
+ * One UTXO holds the whole circle: every member's collateral plus the
+ * contributions paid so far in the current round. Its state lives in the
+ * covenant itself: `state` is the LAST constructor parameter, so CashScript
+ * pushes it FIRST in the redeem script (0x03 <round> <paid> <refunded>).
+ * Every spend must re-create the circle at the address of the next state,
+ * which the covenant computes by swapping those first 4 bytes of
+ * this.activeBytecode. So the state cannot be skipped or tampered with, and
+ * the same single-UTXO design works for a fungible token (PUSD) as well,
+ * because no state NFT has to share the UTXO with the money.
+ *
+ * Rounds are numbered 0..3 here (round r pays member r). Shown as 1..4 in apps.
+ *
+ *   contribute(member)  Anyone may pay `member`'s share of the current round
+ *                       (round 0 also locks that member's collateral, so it
+ *                       costs 2 x contribution). The money is credited to
+ *                       `member`: refunds always go to the member, never to
+ *                       whoever paid.
+ *
+ *   payout()            Once all 4 members paid, anyone may send the pot
+ *                       (4 x contribution, minus the miner fee) to this
+ *                       round's recipient and open the next round. The last
+ *                       payout also returns every member's collateral.
+ *
+ *   refund(member)      After the round deadline, if the round is still not
+ *                       fully funded, anyone may refund `member` (the circle
+ *                       is cancelled). The first refund also needs the circle
+ *                       to have been idle for `grace` blocks, so a round that
+ *                       opened late (its deadline already passed) still gives
+ *                       members time to pay before anyone can cancel it.
+ *                       A member gets back what they paid in
+ *                       this round plus their collateral, EXCEPT a member who
+ *                       already received a pot and did not pay this round:
+ *                       that defaulter's collateral is split equally among
+ *                       the members who have not received a pot yet.
+ *
+ * No function needs a signature, and money can only ever leave to the
+ * member locking bytecodes fixed at creation, so no server holds a key.
+ *
+ * Constructor parameters
+ *   member0..3     locking bytecode of each member, in payout order
+ *   contribution   satoshis each member pays per round (collateral = 1 contribution)
+ *   firstDeadline  block height after which round 0 can be cancelled (CLTV)
+ *   roundLength    blocks between round deadlines: deadline(r) = firstDeadline + r * roundLength
+ *   maxFee         max satoshis a payout or refund may leave as miner fee
+ *   grace          blocks the circle UTXO must be idle before the first refund (BIP68)
+ *   state         bytes3: round (0..3), paid bitmask, refunded bitmask
+ */
+contract Hui(
+    bytes member0,
+    bytes member1,
+    bytes member2,
+    bytes member3,
+    int contribution,
+    int firstDeadline,
+    int roundLength,
+    int maxFee,
+    int grace,
+    bytes3 state
+) {
+    function contribute(int member) {
+        require(this.activeInputIndex == 0, "Hui: the circle must be input 0");
+        require(within(member, 0, 4), "Hui: member must be 0..3");
+
+        int round = int(state.split(1)[0]);
+        bytes2 masks = state.split(1)[1];
+        int paid = int(masks.split(1)[0]);
+        int refunded = int(masks.split(1)[1]);
+        require(refunded == 0, "Hui: the circle was cancelled");
+
+        int bit = 1;
+        if (member == 1) { bit = 2; } else if (member == 2) { bit = 4; } else if (member == 3) { bit = 8; }
+        require((paid / bit) % 2 == 0, "Hui: this member already paid this round");
+
+        // Round 0 also locks one contribution of collateral per member.
+        int amount = contribution;
+        if (round == 0) { amount = contribution * 2; }
+
+        // Output 0 re-creates the circle in the next state with exactly `amount` more.
+        bytes body = this.activeBytecode.split(4)[1];
+        bytes nextScript = 0x03 + toPaddedBytes(round, 1) + toPaddedBytes(paid + bit, 1) + 0x00 + body;
+        require(tx.outputs[0].lockingBytecode == new LockingBytecodeP2SH32(hash256(nextScript)),
+            "Hui: next state mismatch");
+        require(tx.outputs[0].value == tx.inputs[0].value + amount, "Hui: wrong contribution amount");
+        require(tx.outputs[0].tokenCategory == 0x, "Hui: the circle holds no tokens");
+    }
+
+    function payout() {
+        require(this.activeInputIndex == 0, "Hui: the circle must be input 0");
+        require(tx.inputs.length == 1, "Hui: the circle must be spent alone");
+
+        int round = int(state.split(1)[0]);
+        int paid = int(state.split(2)[0].split(1)[1]);
+        require(paid == 15, "Hui: the round is not fully funded");
+
+        bytes recipient = member0;
+        if (round == 1) { recipient = member1; } else if (round == 2) { recipient = member2; } else if (round == 3) { recipient = member3; }
+        require(tx.outputs[0].lockingBytecode == recipient, "Hui: the pot must go to this round's recipient");
+
+        int pot = contribution * 4;
+        int balance = tx.inputs[0].value;
+        if (round < 3) {
+            require(tx.outputs.length == 2, "Hui: a payout has exactly 2 outputs");
+            require(tx.outputs[0].value >= pot - maxFee, "Hui: payout fee above maxFee");
+            bytes body = this.activeBytecode.split(4)[1];
+            bytes nextScript = 0x03 + toPaddedBytes(round + 1, 1) + 0x0000 + body;
+            require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2SH32(hash256(nextScript)),
+                "Hui: next state mismatch");
+            require(tx.outputs[1].value == balance - pot, "Hui: the circle balance must carry over");
+        } else {
+            // Last round: member 3 takes the pot, its own collateral and the creation deposit;
+            // members 0..2 get their collateral back. The circle closes.
+            require(tx.outputs.length == 4, "Hui: the final payout has exactly 4 outputs");
+            require(tx.outputs[0].value >= balance - contribution * 3 - maxFee, "Hui: payout fee above maxFee");
+            require(tx.outputs[1].lockingBytecode == member0, "Hui: collateral must return to its member");
+            require(tx.outputs[2].lockingBytecode == member1, "Hui: collateral must return to its member");
+            require(tx.outputs[3].lockingBytecode == member2, "Hui: collateral must return to its member");
+            require(tx.outputs[1].value == contribution, "Hui: collateral must be returned in full");
+            require(tx.outputs[2].value == contribution, "Hui: collateral must be returned in full");
+            require(tx.outputs[3].value == contribution, "Hui: collateral must be returned in full");
+        }
+    }
+
+    function refund(int member) {
+        require(this.activeInputIndex == 0, "Hui: the circle must be input 0");
+        require(tx.inputs.length == 1, "Hui: the circle must be spent alone");
+        require(within(member, 0, 4), "Hui: member must be 0..3");
+
+        int round = int(state.split(1)[0]);
+        bytes2 masks = state.split(1)[1];
+        int paid = int(masks.split(1)[0]);
+        int refunded = int(masks.split(1)[1]);
+        require(paid != 15, "Hui: the round is fully funded, pay it out");
+        require(tx.time >= firstDeadline + round * roundLength, "Hui: the round deadline has not passed");
+        if (refunded == 0) {
+            require(this.age >= grace, "Hui: the circle has not been idle for the grace period");
+        }
+
+        int bit = 1;
+        if (member == 1) { bit = 2; } else if (member == 2) { bit = 4; } else if (member == 3) { bit = 8; }
+        require((refunded / bit) % 2 == 0, "Hui: this member was already refunded");
+        bool hasPaid = (paid / bit) % 2 == 1;
+
+        int owed = 0;
+        int entitled = paid;
+        if (round == 0) {
+            // Nobody has received anything yet: whoever paid gets their 2 x contribution back.
+            if (hasPaid) { owed = contribution * 2; }
+            // Nobody joined at all: member 0 may sweep the creation deposit.
+            if (paid == 0) { entitled = 1; }
+        } else {
+            // Defaulters: members who already received a pot (index < round) and did not pay this round.
+            int defaulters = 0;
+            int defaulterBits = 0;
+            if (paid % 2 == 0) { defaulters = 1; defaulterBits = 1; }
+            if (round >= 2) {
+                if ((paid / 2) % 2 == 0) { defaulters = defaulters + 1; defaulterBits = defaulterBits + 2; }
+            }
+            if (round == 3) {
+                if ((paid / 4) % 2 == 0) { defaulters = defaulters + 1; defaulterBits = defaulterBits + 4; }
+            }
+            entitled = 15 - defaulterBits;
+
+            if (hasPaid) { owed = contribution; }
+            if (member >= round) {
+                // Not received yet: own collateral back plus an equal share of the forfeited collateral.
+                owed = owed + contribution + defaulters * contribution / (4 - round);
+            } else if (hasPaid) {
+                // Already received and kept paying: collateral back.
+                owed = owed + contribution;
+            }
+        }
+        require((entitled / bit) % 2 == 1, "Hui: nothing to refund for this member");
+
+        bytes memberLock = member0;
+        if (member == 1) { memberLock = member1; } else if (member == 2) { memberLock = member2; } else if (member == 3) { memberLock = member3; }
+        require(tx.outputs[0].lockingBytecode == memberLock, "Hui: a refund must go to its member");
+
+        int balance = tx.inputs[0].value;
+        int nowRefunded = refunded + bit;
+        if (nowRefunded == entitled) {
+            // Last refund: the member also takes the creation deposit and any rounding dust. The circle closes.
+            require(tx.outputs.length == 1, "Hui: the last refund closes the circle");
+            require(tx.outputs[0].value >= balance - maxFee, "Hui: refund fee above maxFee");
+        } else {
+            require(tx.outputs.length == 2, "Hui: a refund has exactly 2 outputs");
+            require(tx.outputs[0].value >= owed - maxFee, "Hui: refund fee above maxFee");
+            bytes body = this.activeBytecode.split(4)[1];
+            bytes nextScript = 0x03 + toPaddedBytes(round, 1) + toPaddedBytes(paid, 1) + toPaddedBytes(nowRefunded, 1) + body;
+            require(tx.outputs[1].lockingBytecode == new LockingBytecodeP2SH32(hash256(nextScript)),
+                "Hui: next state mismatch");
+            require(tx.outputs[1].value == balance - owed, "Hui: the circle balance must carry over");
+        }
+    }
+}
