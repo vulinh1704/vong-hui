@@ -18,6 +18,7 @@
     "src",
     "test",
     "scripts",
+    "demo",
     "vitest.config.ts"
   ]
 }

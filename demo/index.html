@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vòng Hụi PUSD · v0 (14 Nov 2026)</title>
+    <meta name="description" content="v0 starting point of Vòng Hụi PUSD: a rotating savings circle whose pot is held by a CashScript covenant, simulated in your browser." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%230ac18e' stroke-width='4'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%230ac18e'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/style.css" />
+    <script type="module" src="./src/main.ts"></script>
+  </head>
+  <body class="loading">
+    <div class="banner">
+      <strong>v0 · 14 Nov 2026 starting point</strong>
+      <span>Runs locally in your browser on a simulated BCH network</span>
+      <span>No wallet needed</span>
+    </div>
+
+    <header class="hero">
+      <h1>Vòng Hụi PUSD</h1>
+      <p class="lede">
+        A <em>hụi</em> is a rotating savings circle (ROSCA): every round each member pays in, and one member takes the whole pot.
+        Here the pot is held by a <strong>CashScript covenant on Bitcoin Cash</strong> instead of an organiser, so nobody can run off with it.
+      </p>
+      <p class="muted">
+        Every button below builds a real BCH transaction with the project's SDK and broadcasts it to a simulated node, which checks it in the
+        BCH virtual machine (2026 rules) against the real covenant. Refused transactions show the covenant's own error.
+      </p>
+      <div class="scenarios">
+        <button class="primary" data-action="scenarioFull" disabled>▶ Full circle</button>
+        <button class="primary" data-action="scenarioDefault" disabled>▶ Lan takes the pot, then stops paying</button>
+        <button class="primary" data-action="scenarioCheats" disabled>▶ Try to cheat</button>
+        <button class="ghost" data-action="reset" disabled>↺ Reset</button>
+      </div>
+      <p class="loading-note">Loading the BCH virtual machine…</p>
+      <p id="error" class="bad" role="alert"></p>
+    </header>
+
+    <main class="layout">
+      <section class="panel" id="circle" aria-labelledby="circle-title">
+        <h2 id="circle-title">The circle</h2>
+        <div id="circle-body"></div>
+      </section>
+
+      <section class="panel" id="steps" aria-labelledby="steps-title">
+        <h2 id="steps-title">Step by step</h2>
+        <div class="buttons">
+          <button data-action="create" disabled>Create circle</button>
+          <button data-action="payAll" disabled>Everyone pays round 1</button>
+          <button data-action="payout" disabled>Pay out the pot → Lan</button>
+          <button data-action="advance" disabled title="Let blocks pass until this round's deadline (and the 1-block grace period) is over">⏩ Advance past the deadline</button>
+          <button data-action="refundAll" disabled>Refund everyone owed</button>
+        </div>
+        <p class="muted small">Members can also pay or claim a refund one by one on their cards. Skip someone's payment, advance time, and refund to see the circle break.</p>
+
+        <h2 class="sub">Try to cheat</h2>
+        <div class="buttons cheats">
+          <button data-action="earlyPayout" disabled title="Available while the round is not fully funded">Pay out before everyone paid</button>
+          <button data-action="underpay" disabled title="Available while someone has not paid this round">Pay 1 sat less than due</button>
+          <button data-action="stealPot" disabled title="Available when the round is fully funded">Send the pot to a stranger</button>
+          <button data-action="skipRound" disabled title="Available when rounds 1–3 are fully funded">Skip the next member's round</button>
+          <button data-action="earlyRefund" disabled title="Available before the round deadline">Cancel before the deadline</button>
+          <button data-action="refundDefaulter" disabled title="Available after the deadline when a member who already received a pot did not pay">Refund the defaulter's collateral</button>
+        </div>
+        <p class="muted small">Greyed out means it is not a cheat in the current state. <b>▶ Try to cheat</b> sets most of them up for you.</p>
+      </section>
+
+      <section class="panel wide" id="members" aria-labelledby="members-title">
+        <h2 id="members-title">Members <span class="muted small">(simulated wallets, 100,000 sat each to start)</span></h2>
+        <div id="members-body" class="members"></div>
+      </section>
+
+      <section class="panel wide" id="log" aria-labelledby="log-title">
+        <h2 id="log-title">Transactions <span id="log-count" class="muted small"></span></h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>#</th><th>What happened</th><th>Result</th><th>Mock txid</th><th class="num">Bytes</th><th class="num">Fee (sat)</th></tr>
+            </thead>
+            <tbody id="log-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel wide about" aria-labelledby="about-title">
+        <h2 id="about-title">The rules (enforced by the covenant)</h2>
+        <ol>
+          <li>4 members in a fixed order: member <i>k</i> takes the pot in round <i>k</i>.</li>
+          <li>Each round every member pays 10,000 sat. Round 1 costs 20,000: 10,000 plus 10,000 of collateral.</li>
+          <li>Once all 4 have paid, anyone may release the pot (40,000 sat minus the miner fee), but only to that round's member. No signature, no organiser key.</li>
+          <li>If a round misses its deadline, anyone may cancel it: each member gets back what they paid that round plus their collateral.
+            A member who <b>already received a pot and stopped paying</b> loses the collateral, split among the members who have not received yet.</li>
+          <li>Money can only ever leave to the 4 member addresses fixed when the circle was created.</li>
+        </ol>
+
+        <div class="cols">
+          <div>
+            <h3>In v0 (this page, 14 Nov 2026)</h3>
+            <ul>
+              <li>The <code>Hui</code> CashScript covenant (BCH satoshis, 4 members, equal collateral)</li>
+              <li>TypeScript SDK: transaction builders, state model, chain follower</li>
+              <li>31 offline tests in the BCH VM, a chipnet CLI and this simulator</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Not in v0 (planned for BLAZE hack week)</h3>
+            <ul>
+              <li>Real wallets via WizardConnect, live on mainnet</li>
+              <li>PUSD stablecoin pots</li>
+              <li>Tiered collateral, so leaving early never pays</li>
+              <li>A 1% platform fee and the full app UI</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>About this simulation</h3>
+        <ul class="small">
+          <li>Network: CashScript's <code>MockNetworkProvider</code>, in memory. Nothing leaves your browser; keys are throwaway test keys.</li>
+          <li>Each round lasts 6 blocks here. The mock node checks scripts and lock times like a real node, but not coin age (BIP68), so the page
+            enforces the covenant's 1-block grace period itself before the first refund.</li>
+          <li>Transaction sizes and fees are real: 1 sat/byte, as a BCH node would relay them.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span id="build-info"></span>
+      <span>MIT licensed · Vu Linh Truong</span>
+    </footer>
+  </body>
+</html>

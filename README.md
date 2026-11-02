@@ -10,8 +10,9 @@ recipient, or back to the members who paid. No organiser and no server key. Ever
 **collateral** makes it costly to take the pot early and then stop paying.
 
 > Status: **prototype (2 Nov 2026), pre-hackathon baseline for BCH BLAZE 2026**. Covenant + SDK +
-> 24 offline tests + chipnet CLI + offline demo. BCH (satoshis) only; PUSD is designed for, not built
-> yet. No UI, no WizardConnect yet. Nothing has run on chipnet or mainnet yet.
+> 31 offline tests + chipnet CLI + offline demo + a browser simulation of the covenant (`demo/`).
+> BCH (satoshis) only; PUSD is designed for, not built yet. No wallet UI, no WizardConnect yet.
+> Nothing has run on chipnet or mainnet yet.
 
 ## Rules (v0)
 
@@ -88,7 +89,9 @@ get `10,000 + 10,000 + 3,333` back. Member 1 gets nothing more and has lost the 
   long as nobody cancelled first (tested).
 - Coins sent to a circle address by mistake (not through `contribute`) are stuck. They never mix with
   the real circle (it must be input 0 and spent alone).
-- If nobody joins round 1, member 1 can sweep the creation deposit after the deadline.
+- If nobody joins round 1, member 1 can sweep the creation deposit after the deadline. That only
+  pays with a deposit of a few thousand sat: at the default 1,000 sat, the refund's fee (~900 byte
+  transaction) leaves less than the dust limit, so the SDK cannot build it.
 - Round-length timing uses block heights. Relative age (`grace`) is enforced by nodes (BIP68).
   MockNetworkProvider only checks the declared age.
 
@@ -112,8 +115,9 @@ Requires Node ≥ 22.
 
 ```bash
 npm install
-npm test            # 24 offline tests (MockNetworkProvider, BCH_2026_05 VM), ~4 s
+npm test            # 31 offline tests (MockNetworkProvider, BCH_2026_05 VM), ~5 s
 npm run demo        # three stories: full circle, a defaulter, attacks the covenant refuses
+npm run demo:build  # browser simulation -> dist/demo/index.html, then a headless check of that page
 npm run typecheck
 npm run compile     # after editing contracts/hui.cash (a test checks the artifact is fresh)
 ```
@@ -130,6 +134,24 @@ npm run address -- \
 ```
 
 (These are the deterministic TEST keys `testKey('member-0..3')` used by the test suite.)
+
+## Browser demo (v0 simulation)
+
+`npm run demo:build` writes **one self-contained file**, `dist/demo/index.html` (script and styles
+inlined, ~640 KB). Open it straight from disk or host it on any static host (GitHub Pages). It runs
+a 4-member circle against CashScript's `MockNetworkProvider` inside the page, through the same SDK
+(`demo/src/sim.ts` drives `src/hui.ts`), so every button broadcasts a real transaction that the BCH VM
+checks against the real covenant. No wallet, no network.
+
+- Scenarios: **Full circle** (21 transactions), **Lan takes the pot, then stops paying** (her
+  collateral goes to the members who have not received yet), **Try to cheat**.
+- Step by step: create, pay (per member or everyone), pay out, advance past the deadline, refund.
+- Cheating attempts, each refused with the covenant's own `require` message: early payout, underpay,
+  pot to a stranger, skipping a round, cancelling before the deadline, refunding a defaulter.
+- A log of every transaction: mock txid, size, fee, or the refusal reason.
+
+`test/demo.test.ts` drives the same engine headlessly; `npm run demo:check` re-runs the built page in
+happy-dom (no browser, no server).
 
 ## Run on chipnet
 
@@ -163,7 +185,9 @@ Explorer links are printed for each transaction (`https://cbch.loping.net/tx/<tx
 | `src/chain.ts` | Follow a circle on chain (Electrum or in-memory) |
 | `src/cli/hui.ts` | Chipnet CLI |
 | `src/demo.ts` | Offline demo |
-| `test/hui.test.ts` | Tests |
+| `demo/` | Browser simulation: `src/sim.ts` (engine), `src/main.ts` (page), `vite.config.ts` (single-file build), `check-built.mjs` |
+| `test/hui.test.ts` | Covenant tests |
+| `test/demo.test.ts` | Browser demo engine tests |
 
 ## License
 
