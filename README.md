@@ -12,7 +12,8 @@ recipient, or back to the members who paid. No organiser and no server key. Ever
 > Status: **prototype (2 Nov 2026), pre-hackathon baseline for BCH BLAZE 2026**. Covenant + SDK +
 > 31 offline tests + chipnet CLI + offline demo + a browser simulation of the covenant (`demo/`).
 > BCH (satoshis) only; PUSD is designed for, not built yet. No wallet UI, no WizardConnect yet.
-> Nothing has run on chipnet or mainnet yet.
+> Ran on chipnet on 10 Nov 2026 (one full 4-round circle and one broken circle, see "Run on chipnet").
+> Nothing has run on mainnet yet.
 
 ## Rules (v0)
 
@@ -162,6 +163,8 @@ throwaway test keys written to `.hui/chipnet.json` (gitignored).
 npm run hui -- keygen          # 4 member keys; deadlines = current chipnet height + 12, then every 6 blocks
 # Get chipnet coins for EACH member address at https://tbch.googol.cash (choose chipnet):
 # about 60,000 sat each (2C + 3C + fees), member 1 another 1,000 for the creation deposit.
+# Or fund only member 1 and let it pay the others (one transaction, no key printed):
+npx tsx scripts/fund-members.ts --amount 60000
 npm run hui -- status          # follows the circle on chain; shows wallets, deadlines, who paid
 npm run hui -- reschedule      # if the first deadline is too close (only before the circle exists)
 npm run hui -- create          # member 1 pays the 1,000 sat creation deposit to the start address
@@ -175,6 +178,20 @@ npm run hui -- refund --member 2          # 3 and 4 the same; member 1 gets noth
 ```
 
 Explorer links are printed for each transaction (`https://cbch.loping.net/tx/<txid>`).
+
+A second circle with the same keys only needs another config with different deadlines, e.g. a copy
+of `.hui/chipnet.json` passed as `--config .hui/chipnet-broken.json` after `reschedule --config ...`.
+
+The 10 Nov 2026 chipnet run, end to end:
+- full circle: [create](https://cbch.loping.net/tx/3dd26a04a2c05ef854eb46dcdf38357c96ca8b866020b3514d9b4a185b6eb35f),
+  16 contributions and 4 payouts, ending with the
+  [final payout](https://cbch.loping.net/tx/d86395dad14494c9aebf005b8cb888f33cfabadd6ff732cc8c77581d4cf8e76f)
+  (member 4 gets 49,990 sat, members 1-3 get their 10,000 sat collateral back);
+- broken circle: member 1 takes the round-1 pot, skips round 2; after the deadline members 2, 3, 4 are refunded
+  [22,380](https://cbch.loping.net/tx/3b401b092136687cd66e7ac04045db373d03f62e89829e53b887869b29c9e30d),
+  [22,380](https://cbch.loping.net/tx/474d1522c7d2665fba37e73a06ac728567dd3fc4127537b9eca4daa9c3844918) and
+  [23,425](https://cbch.loping.net/tx/be5f945edbd5bdd9d13a1447c1c5b1edc8783b9ef56f78e8853d2efee0dc8e59) sat
+  (member 1's collateral split between them); an early refund is rejected by the node as `non-final`.
 
 ## Files
 

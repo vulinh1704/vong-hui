@@ -329,6 +329,11 @@ async function refund(): Promise<void> {
   const { circle, status } = await openCircle();
   const { state, utxo } = requireOpen(status);
   const member = memberIndex(args.member?.[0], 'member');
+  // checked here so the message uses the CLI's 1-based member numbers (the SDK's error is 0-based)
+  if (!hasBit(entitledMask(state), member) || hasBit(state.refunded, member)) {
+    fail(`${describeState(state)}: member ${member + 1} has nothing to refund ` +
+      '(stopped paying after receiving a pot, never paid this round, or already refunded).');
+  }
   console.log(`\n  ${describeState(state)}: refunding member ${member + 1} (${owedTo(circle.params, state, member)} sat before fee)`);
   let tb: TransactionBuilder;
   try {
