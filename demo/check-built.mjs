@@ -55,6 +55,12 @@ console.log(`Built page: ${(html.length / 1024).toFixed(0)} KiB, script ready in
 check(!document.body.classList.contains('loading'), 'script ran (loading state cleared)');
 check(text('#build-info').startsWith('Built from commit'), `footer: "${text('#build-info')}"`);
 check(text('.banner').includes('v0 · 14 Nov 2026 starting point'), 'v0 banner present');
+const chipnetLinks = [...document.querySelectorAll('#chipnet a')].map((a) => a.getAttribute('href'));
+check(
+  text('#chipnet h2').includes('test network') && chipnetLinks.length === 5 &&
+    chipnetLinks.every((href) => /^https:\/\/cbch\.loping\.net\/tx\/[0-9a-f]{64}$/.test(href)),
+  `chipnet panel: labelled as test network, ${chipnetLinks.length} chipnet explorer links`,
+);
 check(enabled('create') && !enabled('payout') && !enabled('pay', 0), 'fresh page: only "Create circle" (and the scenarios) enabled');
 
 let t = performance.now();
